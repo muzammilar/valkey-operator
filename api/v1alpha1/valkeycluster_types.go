@@ -330,6 +330,8 @@ type ValkeyClusterSpec struct {
 
 	// Override resource requirements for the Valkey container in each pod
 	// +optional
+	// +kubebuilder:validation:XValidation:rule="!has(self.requests) || !has(self.limits) || !('memory' in self.requests) || !('memory' in self.limits) || quantity(string(self.requests['memory'])).compareTo(quantity(string(self.limits['memory']))) <= 0",message="resources.requests.memory must be less than or equal to resources.limits.memory"
+	// +kubebuilder:validation:XValidation:rule="!has(self.requests) || !has(self.limits) || !('cpu' in self.requests) || !('cpu' in self.limits) || quantity(string(self.requests['cpu'])).compareTo(quantity(string(self.limits['cpu']))) <= 0",message="resources.requests.cpu must be less than or equal to resources.limits.cpu"
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 
 	// Scheduling groups pod placement configuration (affinity, node selector,
