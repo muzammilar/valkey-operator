@@ -1684,7 +1684,9 @@ func effectiveShards(state *valkey.ClusterState, nodes *valkeyiov1alpha1.ValkeyN
 func (r *ValkeyClusterReconciler) handleScaleIn(ctx context.Context, cluster *valkeyiov1alpha1.ValkeyCluster, state *valkey.ClusterState, nodes *valkeyiov1alpha1.ValkeyNodeList) (ctrl.Result, bool) {
 	log := logf.FromContext(ctx)
 
-	if len(state.Shards) > int(cluster.Spec.Shards) {
+	// Also drain when an excess-index shard owns slots but the shard count
+	// matches spec (spec shrunk while a newer shard was still joining).
+	if len(state.Shards) > int(cluster.Spec.Shards) || excessShardOwnsSlots(state, nodes, int(cluster.Spec.Shards)) {
 		drained, err := r.drainExcessShards(ctx, cluster, state, nodes)
 		if err != nil {
 			log.Error(err, "scale-in draining failed")
@@ -1704,7 +1706,7 @@ func (r *ValkeyClusterReconciler) handleScaleIn(ctx context.Context, cluster *va
 
 	// Clean up leftover ValkeyNodes from a previous scale-in where drained
 	// primaries became replicas before their ValkeyNodes could be deleted.
-	if deleted, err := r.deleteExcessValkeyNodes(ctx, cluster); err != nil {
+	if deleted, err := r.deleteExcessValkeyNodes(ctx, cluster, state); err != nil {
 		log.Error(err, "failed to delete excess ValkeyNodes")
 		return ctrl.Result{RequeueAfter: 2 * time.Second}, true
 	} else if deleted {
@@ -1803,7 +1805,7 @@ func (r *ValkeyClusterReconciler) drainExcessShards(ctx context.Context, cluster
 
 // deleteExcessValkeyNodes removes ValkeyNode CRs that are outside the desired
 // spec: shard-index >= spec.Shards OR node-index >= 1 + spec.Replicas.
-func (r *ValkeyClusterReconciler) deleteExcessValkeyNodes(ctx context.Context, cluster *valkeyiov1alpha1.ValkeyCluster) (bool, error) {
+func (r *ValkeyClusterReconciler) deleteExcessValkeyNodes(ctx context.Context, cluster *valkeyiov1alpha1.ValkeyCluster, state *valkey.ClusterState) (bool, error) {
 	log := logf.FromContext(ctx)
 	allNodes := &valkeyiov1alpha1.ValkeyNodeList{}
 	if err := r.List(ctx, allNodes, client.InNamespace(cluster.Namespace), client.MatchingLabels(map[string]string{LabelCluster: cluster.Name})); err != nil {
@@ -1822,6 +1824,12 @@ func (r *ValkeyClusterReconciler) deleteExcessValkeyNodes(ctx context.Context, c
 			continue
 		}
 		if shardIndex >= int(cluster.Spec.Shards) || nodeIndex >= nodesPerShard {
+			// Never delete a primary that still owns slots: its keys would be
+			// lost. It is drained first by drainExcessShards.
+			if isSlotOwningPrimary(state, node.Status.PodIP) {
+				log.V(1).Info("excess ValkeyNode still owns slots; waiting for drain", "name", node.Name)
+				continue
+			}
 			if err := r.Delete(ctx, node); err != nil {
 				if !apierrors.IsNotFound(err) {
 					return false, fmt.Errorf("delete excess ValkeyNode %s: %w", node.Name, err)
@@ -1834,6 +1842,31 @@ func (r *ValkeyClusterReconciler) deleteExcessValkeyNodes(ctx context.Context, c
 		}
 	}
 	return deleted, nil
+}
+
+// excessShardOwnsSlots reports whether a shard with index >= expected still
+// owns slots.
+func excessShardOwnsSlots(state *valkey.ClusterState, nodes *valkeyiov1alpha1.ValkeyNodeList, expected int) bool {
+	for _, shard := range state.Shards {
+		if len(shard.Slots) > 0 && shardIndexFromState(shard, nodes) >= expected {
+			return true
+		}
+	}
+	return false
+}
+
+// isSlotOwningPrimary reports whether address is the primary of a shard that
+// owns slots.
+func isSlotOwningPrimary(state *valkey.ClusterState, address string) bool {
+	if state == nil || address == "" {
+		return false
+	}
+	for _, shard := range state.Shards {
+		if p := shard.GetPrimaryNode(); p != nil && p.Address == address && len(shard.Slots) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // shardIndexFromState determines the shard index for a given Valkey Cluster
