@@ -1406,11 +1406,15 @@ func (r *ValkeyClusterReconciler) replicateToShardPrimary(ctx context.Context, c
 
 	log.V(1).Info("add a new replica", "primary IP", primaryIP, "primary Id", primaryNodeId, "replica address", node.Address, "shardIndex", shardIndex)
 	if err := node.Client.Do(ctx, node.Client.B().ClusterReplicate().NodeId(primaryNodeId).Build()).Error(); err != nil {
-		// "Unknown node" means gossip hasn't propagated the primary's ID to
-		// this replica yet. This is transient and will resolve on the next
-		// reconcile once gossip catches up — treat it as retriable.
+		// "Unknown node" means this replica has not learned the primary's ID.
+		// Gossip alone may never deliver it (e.g. the replica was only met
+		// to another isolated node), so introduce the replica to the primary
+		// directly and retry REPLICATE on the next reconcile.
 		if strings.Contains(err.Error(), "Unknown node") {
-			log.V(1).Info("replica does not yet know primary (gossip pending); will retry", "replica", node.Address, "primaryId", primaryNodeId)
+			log.V(1).Info("replica does not yet know primary; meeting primary and will retry", "replica", node.Address, "primaryId", primaryNodeId)
+			if err := node.Client.Do(ctx, node.Client.B().ClusterMeet().Ip(primaryIP).Port(DefaultPort).Build()).Error(); err != nil {
+				log.Error(err, "CLUSTER MEET failed", "from", node.Address, "to", primaryIP)
+			}
 			return fmt.Errorf("shard %d: %w", shardIndex, errPrimaryNotReady)
 		}
 		log.Error(err, "command failed: CLUSTER REPLICATE", "nodeId", primaryNodeId)
