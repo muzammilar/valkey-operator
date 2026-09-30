@@ -35,7 +35,7 @@ With persistence, a cluster without failover quorum never promoted the replica o
   - with persistence: the first FAIL, after the grace period, while a node is loading, and a recovered primary.
 - The loading case fails without the guard.
 - `TestOrphanTakeoverGrace` covers the env parsing.
-- Commands go through the real valkey-go client to a small in-process RESP server (`fake_valkey_test.go`).
+- Uses valkey-go's own mock package, `github.com/valkey-io/valkey-go/mock`. It adds `go.uber.org/mock` as a test dependency.
 
 ### Checklist
 
