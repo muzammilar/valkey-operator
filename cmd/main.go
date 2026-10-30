@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -82,6 +83,7 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var pprofAddr string
+	var orphanTakeoverGrace, orphanTakeoverMaxWait time.Duration
 	var tlsOpts []func(*tls.Config)
 	var watchNamespaces []string
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
@@ -277,6 +279,9 @@ func main() {
 		Scheme:        mgr.GetScheme(),
 		Recorder:      mgr.GetEventRecorder("valkeycluster-controller"),
 		ValkeyClients: valkeyClients,
+
+		OrphanTakeoverGrace:   orphanTakeoverGrace,
+		OrphanTakeoverMaxWait: orphanTakeoverMaxWait,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "ValkeyCluster")
 		os.Exit(1)
