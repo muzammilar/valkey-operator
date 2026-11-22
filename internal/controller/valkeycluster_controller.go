@@ -363,11 +363,11 @@ func (r *ValkeyClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				_ = r.updateStatus(ctx, cluster, state)
 				return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 			}
-			if hasAuthorizedOrphan(cluster, orphanCandidates) {
-				result, _ := r.promoteOrphanedReplicas(ctx, cluster, state, nodes, orphanCandidates)
-				_ = r.updateStatus(ctx, cluster, state)
-				return result, nil
-			}
+		}
+		if len(orphanCandidates) > 0 && (cluster.Spec.Persistence == nil || state.HasFailoverQuorum() || hasAuthorizedOrphan(cluster, orphanCandidates)) {
+			result, _ := r.promoteOrphanedReplicas(ctx, cluster, state, nodes, orphanCandidates)
+			_ = r.updateStatus(ctx, cluster, state)
+			return result, nil
 		}
 		// An unschedulable pod is reported first, whether the roll is under
 		// way or held. The pod it reports belongs to a later shard or sits
@@ -1649,9 +1649,6 @@ func (r *ValkeyClusterReconciler) replicateToShardPrimary(ctx context.Context, c
 // is an explicit acknowledgement that the primary's durable writes may be lost.
 // Returns (result, true) when a takeover ran or manual recovery is required.
 func (r *ValkeyClusterReconciler) promoteOrphanedReplicas(ctx context.Context, cluster *valkeyiov1alpha1.ValkeyCluster, state *valkey.ClusterState, nodes *valkeyiov1alpha1.ValkeyNodeList, candidates []orphan) (ctrl.Result, bool) {
-	if cluster.Spec.Persistence != nil && state.HasFailoverQuorum() {
-		return ctrl.Result{}, false
-	}
 	if len(candidates) == 0 {
 		return ctrl.Result{}, false
 	}
