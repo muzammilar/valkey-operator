@@ -363,11 +363,11 @@ func (r *ValkeyClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				_ = r.updateStatus(ctx, cluster, state)
 				return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 			}
-			if hasAuthorizedOrphan(cluster, orphanCandidates) {
-				result, _ := r.promoteOrphanedReplicas(ctx, cluster, state, nodes, orphanCandidates)
-				_ = r.updateStatus(ctx, cluster, state)
-				return result, nil
-			}
+		}
+		if len(orphanCandidates) > 0 && (cluster.Spec.Persistence == nil || state.HasFailoverQuorum() || hasAuthorizedOrphan(cluster, orphanCandidates)) {
+			result, _ := r.promoteOrphanedReplicas(ctx, cluster, state, nodes, orphanCandidates)
+			_ = r.updateStatus(ctx, cluster, state)
+			return result, nil
 		}
 		// An unschedulable pod is reported first, whether the roll is under
 		// way or held. The pod it reports belongs to a later shard or sits

@@ -217,6 +217,17 @@ When `persistence` is set, the operator manages a PVC for each ValkeyNode. With 
 
 If a primary fails and the cluster has no failover quorum (for example a single shard), Valkey cannot promote its replica. With persistence, the operator does not take over automatically: a timer cannot distinguish a dead primary from a partitioned or slow-restarting one, and takeover may discard writes that exist only on the primary's volume. The cluster is marked `Degraded=True` with reason `AwaitingManualTakeover`. Its message and a Warning event identify the shard, failed primary, eligible replica, and command to authorize takeover.
 
+Before authorizing recovery, inspect the recovery condition, node roles, pods, and events:
+
+```sh
+kubectl get valkeycluster <name> -n <namespace> -o yaml
+kubectl get valkeynodes -n <namespace> -o wide
+kubectl get pods,pvc -n <namespace>
+kubectl get events -n <namespace> --sort-by=.metadata.creationTimestamp
+```
+
+Use the `AwaitingManualTakeover` message to identify the failed primary and candidate replica. Check whether the primary's pod or storage can return, and whether the problem is a network partition. An unschedulable pod or an unreachable server does not prove its durable data is lost. If the primary can return, restore its pod, storage, or connectivity and let it recover. Otherwise, decide whether to accept losing writes that exist only on its volume. A partitioned primary may still be running; prevent clients from continuing to write to it before authorizing takeover.
+
 To accept the possible data loss, annotate the ValkeyCluster with the failed primary's node ID:
 
 ```sh
@@ -224,6 +235,8 @@ kubectl annotate valkeycluster <name> -n <namespace> valkey.io/force-takeover=<p
 ```
 
 The annotation is honored only when the named primary is already an unreachable orphan eligible for takeover. A reachable primary, including one loading its dataset, cannot be taken over through this annotation. The operator removes the ID after TAKEOVER succeeds; a failed command retains the authorization and retries the same replica. Multiple IDs can be supplied as a comma-separated list. An ID not eligible in the current scrape is ignored and preserved through incomplete scrapes; the operator clears it after it observes that primary reachable again. If the primary's persistent volume returns, Valkey can recover without discarding its data, and the `AwaitingManualTakeover` condition clears.
+
+After recovery, check the node roles and application data, confirm that the successful primary ID was removed from the annotation, and inspect any remaining conditions. `AwaitingManualTakeover` clearing means that takeover is no longer pending; the cluster may still need its missing pods or replicas restored before it becomes `Ready`.
 
 The operator pins each uncertain attempt to its selected replica so it cannot promote a sibling using the same approval. If that replica becomes unavailable before the result can be confirmed, the operator waits on that primary while continuing recovery on other approved shards. To cancel the pinned attempt and choose again, remove the approval, wait until that primary's entry disappears from `valkey.io/force-takeover-attempt`, then annotate the failed primary ID again:
 
