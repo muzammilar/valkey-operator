@@ -238,6 +238,17 @@ func newOrphanTakeoverFixture(t *testing.T, persistent bool, annotation string, 
 }
 
 func TestPromoteOrphanedReplicas(t *testing.T) {
+	t.Run("persistent cluster with quorum leaves recovery to Valkey", func(t *testing.T) {
+		f := newOrphanTakeoverFixture(t, true, "p1", nil)
+		f.state.Shards = append(f.state.Shards,
+			&valkey.ShardState{PrimaryId: "p2", Nodes: []*valkey.NodeState{orphanTestNode("p2", "p2 10.0.0.3:6379@16379 myself,master - 0 0 1 connected 5461-10922")}},
+			&valkey.ShardState{PrimaryId: "p3", Nodes: []*valkey.NodeState{orphanTestNode("p3", "p3 10.0.0.4:6379@16379 myself,master - 0 0 1 connected 10923-16383")}},
+		)
+		assert.True(t, f.state.HasFailoverQuorum())
+		_, handled := f.reconciler.promoteOrphanedReplicas(context.Background(), f.cluster, f.state, f.nodes, f.candidates)
+		assert.False(t, handled)
+		assert.Zero(t, f.client.takeovers)
+	})
 
 	t.Run("persistent cluster waits for explicit authorization", func(t *testing.T) {
 		f := newOrphanTakeoverFixture(t, true, "", nil)
